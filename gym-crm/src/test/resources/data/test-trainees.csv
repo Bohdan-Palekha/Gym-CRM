@@ -1,0 +1,3 @@
+id,firstName,lastName,username,password,isActive,dateOfBirth,address
+1,Test,Trainee,Test.Trainee,testPass003,true,1990-01-01,Test Street 1
+2,Sam,Wilson,Sam.Wilson,testPass004,true,1985-07-20,Sample Road 5

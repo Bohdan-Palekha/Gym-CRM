@@ -1,0 +1,3 @@
+id,firstName,lastName,username,password,isActive,specialization
+1,Test,Trainer,Test.Trainer,testPass001,true,YOGA
+2,Anna,Lee,Anna.Lee,testPass002,true,FITNESS

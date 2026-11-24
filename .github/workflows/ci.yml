@@ -1,0 +1,175 @@
+name: CI
+
+# test    - build + unit tests + coverage for each Maven module (they are independent projects, no parent pom)
+# smoke   - build the images, start the whole docker compose stack, run scripts/smoke-test.sh end to end
+# publish - push the images to GHCR; only from the default branch or a v* tag, and only if both of the above pass
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # JDK 21: the surefire argLine in gym-crm/trainer-workload-service uses -XX:+EnableDynamicAgentLoading,
+  # which only exists from JDK 21. Bytecode stays at the poms' 17.
+  JAVA_VERSION: "21"
+  # Line coverage target (task criterion 3). Reported always; set COVERAGE_ENFORCE to "true" to fail the build.
+  MIN_LINE_COVERAGE: "80"
+  COVERAGE_ENFORCE: "false"
+
+jobs:
+  test:
+    name: test (${{ matrix.module }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: discovery-server
+            goals: verify
+          # gym-crm's surefire argLine contains @{argLine} but its pom has no JaCoCo plugin to define that
+          # property, so a bare `mvn verify` dies with "Could not find or load main class @{argLine}".
+          # JaCoCo is attached from the command line instead of editing the pom.
+          - module: gym-crm
+            goals: org.jacoco:jacoco-maven-plugin:0.8.12:prepare-agent verify org.jacoco:jacoco-maven-plugin:0.8.12:report
+          # already configures JaCoCo (prepare-agent + report) in its own pom
+          - module: trainer-workload-service
+            goals: verify
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+          cache-dependency-path: ${{ matrix.module }}/pom.xml
+
+      - name: Build and test
+        run: mvn -B -ntp ${{ matrix.goals }}
+
+      - name: Line coverage
+        if: ${{ !cancelled() }}
+        env:
+          MODULE: ${{ matrix.module }}
+        run: |
+          csv=target/site/jacoco/jacoco.csv
+          if [ ! -f "$csv" ]; then
+            echo "No JaCoCo report for ${MODULE}; skipping the coverage summary."
+            exit 0
+          fi
+          # jacoco.csv columns 8 and 9 are LINE_MISSED and LINE_COVERED
+          pct=$(awk -F, 'NR > 1 { m += $8; c += $9 } END { printf "%.1f", (m + c > 0) ? 100 * c / (m + c) : 0 }' "$csv")
+          echo "**${MODULE}**: ${pct}% line coverage (target ${MIN_LINE_COVERAGE}%)" >> "$GITHUB_STEP_SUMMARY"
+          if awk -v p="$pct" -v min="$MIN_LINE_COVERAGE" 'BEGIN { exit !(p < min) }'; then
+            echo "::warning title=Coverage::${MODULE} line coverage ${pct}% is below ${MIN_LINE_COVERAGE}%"
+            if [ "$COVERAGE_ENFORCE" = "true" ]; then exit 1; fi
+          fi
+
+      - name: Upload test and coverage reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: reports-${{ matrix.module }}
+          path: |
+            ${{ matrix.module }}/target/surefire-reports
+            ${{ matrix.module }}/target/site/jacoco
+          if-no-files-found: ignore
+          retention-days: 7
+
+  smoke:
+    name: compose smoke test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build images and start the stack
+        run: docker compose up -d --build --wait --wait-timeout 600
+
+      - name: End-to-end smoke test
+        run: bash scripts/smoke-test.sh
+
+      - name: Container status and logs
+        if: ${{ failure() }}
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color --tail=300
+
+      - name: Tear down
+        if: ${{ always() }}
+        run: docker compose down -v --remove-orphans
+
+  publish:
+    name: publish (${{ matrix.module }})
+    needs: [test, smoke]
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref_type == 'tag' || github.ref_name == github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { module: discovery-server, port: "8761" }
+          - { module: gym-crm, port: "8080" }
+          - { module: trainer-workload-service, port: "8082" }
+    steps:
+      - uses: actions/checkout@v7
+
+      # GHCR requires lowercase repository names
+      - name: Image name
+        id: image
+        env:
+          MODULE: ${{ matrix.module }}
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/${MODULE}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          build-args: |
+            MODULE=${{ matrix.module }}
+            PORT=${{ matrix.port }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.module }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.module }}

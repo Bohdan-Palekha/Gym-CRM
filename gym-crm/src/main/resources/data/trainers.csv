@@ -1,0 +1,4 @@
+id,firstName,lastName,username,password,isActive,specialization
+1,John,Smith,John.Smith,xPk9mZqRtL,true,YOGA
+2,Jane,Doe,Jane.Doe,wQn3bVhYcM,true,FITNESS
+3,Mike,Johnson,Mike.Johnson,rTs7dNuEaF,false,STRETCHING

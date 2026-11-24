@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dataset>
+    <users id="9001" first_name="Priya" last_name="Kapoor" username="priya.kapoor"
+           password="pw-priya" is_active="true"/>
+    <trainee user_id="9001" date_of_birth="1997-03-22" address="4 Cedar Court"/>
+
+    <users id="9002" first_name="Noah" last_name="Fischer" username="noah.fischer"
+           password="pw-noah" is_active="false"/>
+    <trainee user_id="9002" date_of_birth="2001-11-09"/>
+</dataset>

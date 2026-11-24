@@ -1,0 +1,17 @@
+# Build context = repository root. Only <module>/pom.xml and <module>/src are COPYed by the
+# Dockerfile; everything else is excluded to keep the context small and the layer cache stable.
+.git
+.github
+.idea
+*.iml
+**/target
+**/logs
+**/*.log
+.env
+.env.*
+**/HELP.md
+*.md
+*.http
+scripts
+docker-compose*.yml
+ScriptFilesCombineIntoOne.py

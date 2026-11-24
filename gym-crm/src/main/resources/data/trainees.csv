@@ -1,0 +1,4 @@
+id,firstName,lastName,username,password,isActive,dateOfBirth,address
+1,Bob,Brown,Bob.Brown,kLp2mXqZwN,true,1995-06-15,123 Main Street
+2,Alice,Green,Alice.Green,vBn8hRtYcQ,true,1998-11-22,45 Oak Avenue
+3,Charlie,Davis,Charlie.Davis,jWs4fKuPxE,true,2000-03-10,78 Pine Road
